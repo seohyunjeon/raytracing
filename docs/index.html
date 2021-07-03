@@ -9,14 +9,14 @@
       padding-left: 100px;  
     }  
   </style> 
-<title>Seohyun Jeon  |  CS 184</title>
+<title>Foundations of Ray Tracing</title>
 <meta http-equiv="content-type" content="text/html; charset=utf-8" />
 <link rel="stylesheet" type="text/css" href="style.css" media="screen" />
 </head>
 <body>
 <br />
-<h1 align="middle">Assignment 3: PathTracer</h1>
-    <h2 align="middle">Seohyun Jeon | cs184-adv</h2>
+<h1 align="middle">Foundations of Ray Tracing</h1>
+    <h2 align="middle">Seohyun Jeon</h2>
 
     <div class="padded">
         <h2 align="middle">Overview</h2>
@@ -37,9 +37,7 @@
         <p>
             To implement triangle intersection, I used the Moller-Trumbore algorithm to find the time <code>t</code> at which our ray would intersect the triangle as well as the barycentric coordinates of the point of intersection. If the Moller-Trumbore algorithm returned a valid <code>t</code> as well as barycentric coordinates, I updated the ray’s <code>max_t</code> and calculated the surface normal at the point of intersection with the barycentric coordinates.
         </p>
-        <p>
-            For sphere intersection, I did the same steps except using the equation for ray-sphere intersection from lecture. To calculate the normal, I found the vector from the center of the sphere to the point of intersection.
-        </p>
+        
         <h3 align="middle">Normal Shading Results</h3>
         <div align="center">
             <table style="width=100%">
@@ -82,7 +80,7 @@
             Here, we can see that rendering <code>cow.dae</code> took ~72 seconds to render without BVH. Not terrible, but cow.dae is one of the simpler meshes. This will fall apart quickly. After implementing BVH, we can see that rendering the cow takes less than a second--only 0.08 seconds! Without BVH, we were naively checking if a ray intersected with any of the primitives in the mesh. On the other hand, with BVH, we are able to skip checking anything in a bounding box that does not intersect with our ray since it is impossible for a ray to intersect with a primitive inside a bounding box it does not intersect. Because of this, we save massive amounts of time in checking ray intersection. Because of our tree structure, we can easily traverse down to the leaf that our ray intersects with if an intersection exists. This is clear when we see that we were averaging 2700+ intersection tests per ray without BVH vs. about 2.5 per ray with BVH!
         </p>
         <h3 align="middle">So Many Triangles</h3>
-        <p>Below are some meshes that can only feasibly be rendered after implementing BVH! I don't even want to think about how long this would have taken on my laptop without BVH. Thanks hive machines :')</p>
+        <p>Below are some meshes that can only feasibly be rendered after implementing BVH! </p>
         <div align="center">
             <table style="width=100%">
                 <tr>
@@ -305,6 +303,202 @@
         <p>Thanks to adaptive sampling, we can generate images with a whopping 2048 samples per pixel without frying our machines! This is because not every pixel (in fact, the majority) is actually sampled a full 2048 times. In the sampling rate visualization on the right, red areas have high sampling rates, and blue areas have low sampling rates.</p>
 
     </div>
+    <div class="padded">
+
+        
+
+            <h2 align="middle">Part 6: Mirror and Glass Materials</h2>
+            <p>
+            Originally, we were only able to render diffuse surfaces that bounced light equally in all directions. This time, we implemented mirror surfaces that perfectly reflect light, glass that both reflects and refracts, and microfacet surfaces that have both color and reflective properties!
+        </p>
+        <p>
+            While diffuse surfaces bounce light in equal directions, sampling is very different for the materials in this part of the project. Rays hitting perfect mirrors have one exact reflection, and rays hitting refractive surfaces have exactly one refracted ray. Microfacet materials, on the other hand, can be thought of as materials with countless tiny bumps on the surface, each being a mirror itself. Additionally, microfacet materials have different colors (as seen in our gold dragon vs copper bunny later on) due to the differing reflections at RGB wavelengths.
+        </p>
+            <h3 align="middle">Mirror Materials</h3>
+            <p>
+                To implement mirror materials, we need to implement a new sampling method, <code>MirrorBSDF::sample_f()</code> that emulates light bouncing off of a perfect mirror. To do this, we implement <code>BSDF::reflect()</code>, which takes in outgoing ray <code>wo</code> and populates the incoming vector <code>wi</code>. Because the intersection point in BSDF calculations is the origin of the space our rays our defined in, the mirror reflection of <code>wo</code> is simply the reflection over the normal. Fortunately, the normal is aligned with the z axis in our BSDF coordinate space, so <code>wi</code> has the same <code>x</code>, <code>y</code>, <code>z</code> values as <code>wo</code>, except with the signs flipped for <code>x</code> and <code>y</code>.
+            </p>
+            <p>
+                In <code>MirrorBSDF::sample_f()</code>, we simply use <code>reflect()</code> to appropriately populate <code>wi</code>, and set the <code>pdf</code> to <code>1.0</code> since we are dealing with a delta BSDF and there is no probability involved with sampling; each ray has one exact reflection. Now our incoming ray and pdf are correctly populated. We finally return the reflectance scaled down by the cosine of our incoming ray in order to cancel out the cosine that <code>at_least_one_bounce_radiance</code> uses to emulate Lambertian falloff.
+            </p>
+            <h3 align="middle">Refractive Materials</h3>
+            <p>
+                Similarly to above with mirror materials, we must implement a function that samples and populates the incoming ray through a refractive material. First, we define &eta;, the ratio of old index of refraction to new index of refraction. Because we are only dealing with refractive materials and air, this will be a ratio between <code>1.0</code> (index of refraction of air) and our <code>ior</code>. If <code>wo</code> is entering the object in question, then &eta; is defined as <code>1.0/ior</code> since our “old” material is the air, and we enter the “new” material. If we are exiting the object, &eta; is simply <code>ior</code>. We can check whether <code>wo</code> is entering or exiting based on its <code>z</code> coordinate; a positive <code>z</code> indicates that we are entering the refractive material.
+            </p>
+            <p>We now have all the elements needed to calculate <code>wi</code>. We can extrapolate from Snell’s law to conclude that <code>cos&theta;' = sqrt(1-&eta;<sup>2</sup>(1 - &omega;<sub>o</sub>z<sup>2</sup>))</code>, where <code>&theta;'</code> is the angle between the normal and <code>wi</code>. However, if the term under the square root is negative and we don’t have a real root for <code>cos&theta;'</code>, there is total internal reflection and no light is reflected to the new material. Thus, we return false and leave <code>wi</code> empty in this case. If we have a valid refraction, we populate <code>wi</code> appropriately using our known &eta; and <code>wo</code>.</p>
+            <p>Finally, we put this all together in <code>RefractionBSDF::sample_f()</code>. If there is a valid refraction (not total internal reflection) we use <code>refract()</code> to populate <code>wi</code>. Again, <code>pdf</code> is simply <code>1.0</code>. We then return transmittance scaled down by cosine of our incoming ray for the same reason as in mirror materials. We also scale down by &eta;<sup>2</sup> to emulate the level of dispersion dependent on the index of refraction.</p>
+            <h3 align="middle">Porque no los dos? Glass!</h3>
+            <p>At this point, we can render purely reflective and refractive materials. We can see this in the image below, with the left sphere being purely reflective and the right sphere being purely refractive. However, glass both refracts <i>and</i> reflects light; we can see our reflection in glass windows! To realistically render glass, we need to create a hybrid of these two extremes.</p>
+            <div align="center">
+                <table style="width=100%">
+                    <tr>
+                        <td align="middle">
+                            <img src="./images/testoto.png" width="480px" />
+                            <figcaption align="middle">Reflective vs refractive sphere</figcaption>
+                        </td>
+                    </tr>
+                </table>
+            </div>
+            <p>
+                If total internal reflection occurs, we simply treat this case as a reflection. If not, we need to calculate Schlick’s approximation <code>R</code>, the proportion of light that is reflected. We flip a coin with probability <code>R</code> of returning true; this means that approximately fraction <code>R</code> of our valid light rays will be reflected. Over a large number of samples/rays, this will have the same effect as each individual ray being split into reflection and refraction. If our coin flip yields true, we set <code>pdf</code> to <code>R</code>, the probability that we reflect the given ray. We then return the appropriately scaled reflectance pased on the pdf and reflectance. Else, we set <code>pdf</code> to <code>1.0-R</code> and return the appropriately scaled transmittance.
+            </p>
+            <h3 align="middle">Mirror, Mirror on the Wall</h3>
+            <p>All images below are rendered with 64 samples per pixel and 4 samples per light</p>
+            <div align="center">
+                <table style="width=100%">
+                    <tr>
+                        <td align="middle">
+                            <img src="./images/depth0.png" width="400px" />
+                            <figcaption align="middle">Depth = 0</figcaption>
+                        </td>
+                        <td align="middle">
+                            <img src="./images/depth1.png" width="400px" />
+                            <figcaption align="middle">Depth = 1</figcaption>
+                        </td>
+                    </tr>
+                </table>
+            </div>
+            <p>At depth 0, we simply have zero bounce illumination, and can only see the light source. At depth 1, we get one bounce illumination. The spheres are not lit up the same way our diffuse spheres were lit up with one bounce illumination in part 1, since our sampling method is different. We can also see that the reflection on the right (refractive) sphere has many black spots, because those spots were rays that were refracted (and can’t reach the camera with depth 1).</p>
+            <div align="center">
+                <table style="width=100%">
+                    <tr>
+                        <td align="middle">
+                            <img src="./images/depth2.png" width="400px" />
+                            <figcaption align="middle">Depth = 2</figcaption>
+                        </td>
+                        <td align="middle">
+                            <img src="./images/depth3.png" width="400px" />
+                            <figcaption align="middle">Depth = 3</figcaption>
+                        </td>
+                    </tr>
+                </table>
+            </div>
+            <p>At depth 2, the mirror sphere starts coming into view, as light bounces off the walls and onto the surface of the sphere. However, the glass ball is still quite dark as the refracted light has only been able to enter the glass sphere, not exit. At depth 3, the glass sphere also comes into view, as light rays have hit, entered, and exited the glass. However, the glass ball is still dark in the mirror reflection because we need an additional bounce to bounce the light onto the mirror.</p>
+            <div align="center">
+                <table style="width=100%">
+                    <tr>
+                        <td align="middle">
+                            <img src="./images/depth4.png" width="400px" />
+                            <figcaption align="middle">Depth = 4</figcaption>
+                        </td>
+                        <td align="middle">
+                            <img src="./images/depth5.png" width="400px" />
+                            <figcaption align="middle">Depth = 5</figcaption>
+                        </td>
+                    </tr>
+                </table>
+            </div>
+            <p>At depth 4, all essential lighting is achieved, as the glass sphere is visible in the reflection of the mirror sphere. This is possible because we have traced the ray from the reflection to the surface of the glass, into the glass, out of the glass, and to the light source. At depth 5, we simply get a slightly brighter image from more bounces.</p>
+            <div align="center">
+                <table style="width=100%">
+                    <tr>
+                        <td align="middle">
+                            <img src="./images/depth100.png" width="480px" />
+                            <figcaption align="middle">Depth = 100</figcaption>
+                        </td>
+                    </tr>
+                </table>
+            </div>
+            <p>Depth 100! A slightly brighter image from more bounced light. However, the difference between depth 5 and 100 is quite small, as the noticeable light bouncing occurs within the first handful of levels.</p>
+            <div align="center">
+                <table style="width=100%">
+                    <tr>
+                        <td align="middle">
+                            <img src="./images/spheres.gif" width="480px" />
+                            <figcaption align="middle">Emerging from the darkness!</figcaption>
+                        </td>
+                    </tr>
+                </table>
+            </div>
+
+            <h2 align="middle">Microfacet Material</h2>
+            <h3 align="middle">BRDF Evaluation Function</h3>
+            <p>The microfacet BRDF evaluation function is given by the equation below, where F is the Fresnel term, G is the shadow-masking term, D is the normal distribution function, n is the surface normal, and h is vector halfway between <code>wo</code> and <code>wi</code>.</p>
+
+            <div align="center">
+                <table style="width=100%">
+                    <tr>
+                        <td align="middle">
+                            <img src="./images/brdf.png" width="300px" />
+                        </td>
+                    </tr>
+                </table>
+            </div>
+            <p>
+                For the Fresnel term, we simplify the process by only calculating the terms for fixed red, green, and blue wavelengths. The Fresnel terms are dependent on &eta; and <i>k</i> values, which are characteristic of different materials. For D, we use the Beckmann distribution, which is dependent on &alpha;, the roughness of our surface, and the angle between our bisecting vector and the normal.
+            </p>
+
+            <h3 align="middle">Importance Sampling</h3>
+            <p>While cosine hemisphere sampling is not <i>wrong</i>, it is very inefficient for microfacet materials, which do not reflect light uniformly, and will take a high number of samples to converge to the “true” image.</p>
+
+            <div align="center">
+                <table style="width=100%">
+                    <tr>
+                        <td align="middle">
+                            <img src="./images/cubunshemi.png" width="400px" />
+                            <figcaption align="middle">Cosine hemisphere sampling</figcaption>
+                        </td>
+                        <td align="middle">
+                            <img src="./images/cubunsimport.png" width="400px" />
+                            <figcaption align="middle">Importance sampling</figcaption>
+                        </td>
+                    </tr>
+                </table>
+            </div>
+        <p>Both images above were rendered with 64 samples per pixel, 1 sample per light, and max depth 5. We can see that despite having the same number of samples and depth, the importance sampled bunny is far less noisy than the hemisphere sampled one. This is because cosine sampling leads us to sample many "useless" rays, since microfacet surfaces do not reflect light uniformly the way diffuse surfaces do.</p>
+
+            <h3 align="middle">A new species?</h3>
+            <div align="center">
+                <table style="width=100%">
+                    <tr>
+                        <td align="middle">
+                            <img src="./images/crbuns.png" width="480px" />
+                            <figcaption align="middle">Chromium bunny!</figcaption>
+                        </td>
+                    </tr>
+                </table>
+            </div>
+            <p>While the original bunny was a copper bunny, this one is a chromium bunny! This was achieved by using &eta; values 3.1743, 3.1800, 2.4650 and <i>k</i> values 3.3000, 3.3300, 3.2150 for R, G, B wavelengths respectively. I found these values using the website linked in the spec.</p>
+
+            <h3 align="middle">Smooth, Smoother, Smoothest</h3>
+            <p>All images below (except for the last, see caption) were rendered with 128 samples per pixel, 1 sample per light, and max depth 6.</p>
+            <div align="center">
+                <table style="width=100%">
+                    <tr>
+                        <td align="middle">
+                            <img src="./images/dragon5.png" width="300px" />
+                            <figcaption align="middle">&alpha; = 0.5</figcaption>
+                        </td>
+                        <td align="middle">
+                            <img src="./images/dragon25.png" width="300px" />
+                            <figcaption align="middle">&alpha; = 0.25</figcaption>
+                        </td>
+
+                    </tr>
+                    <tr>
+                        <td align="middle">
+                            <img src="./images/dragon05.png" width="300px" />
+                            <figcaption align="middle">&alpha; = 0.05</figcaption>
+                        </td>
+                        <td align="middle">
+                            <img src="./images/dragon005.png" width="300px" />
+                            <figcaption align="middle">&alpha; = 0.005.. almost as smooth as my brain!</figcaption>
+                        </td>
+                    </tr>
+                </table>
+            </div>
+            <div align="center">
+                <table style="width=100%">
+                    <tr>
+                        <td align="middle">
+                            <img src="./images/dragon0052.png" width="300px" />
+                            <figcaption align="middle">&alpha; = 0.005, 4 samples/light</figcaption>
+                        </td>
+                    </tr>
+                </table>
+            </div>
+            <p>The &alpha; value corresponds to the roughness of the material; higher values are rougher, while lower values are smoother and thus glossier. We can see that using &alpha; value 0.5 gives us a relatively dull surface. Decreasing this to 0.25 gives us a smoother, more reflective surface. Further decreasing this to 0.05 gives us an extremly shiny and smooth surface that seems to act like a gold-tinged mirror. Finally, at 0.005, we expect an extremely smooth surface. However, there is some aliasing due to the low sampling rate that caused the highlights to not appear prominently. I included another image with 4 samples per light instead of 1 sample per light in order to give a more accurate representation of the material.</p>
+        </o></div>
 </body>
 </html>
 
