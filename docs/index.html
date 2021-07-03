@@ -1,0 +1,313 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head>
+<style>  
+    div.padded {  
+      padding-top: 0px;  
+      padding-right: 100px;  
+      padding-bottom: 0.25in;  
+      padding-left: 100px;  
+    }  
+  </style> 
+<title>Seohyun Jeon  |  CS 184</title>
+<meta http-equiv="content-type" content="text/html; charset=utf-8" />
+<link rel="stylesheet" type="text/css" href="style.css" media="screen" />
+</head>
+<body>
+<br />
+<h1 align="middle">Assignment 3: PathTracer</h1>
+    <h2 align="middle">Seohyun Jeon | cs184-adv</h2>
+
+    <div class="padded">
+        <h2 align="middle">Overview</h2>
+        <p>In this project, I learned why my laptop will never be able to handle ray-tracing in games. The poor thing could hardly render one (1) cow, it would implode if it had to ray trace hundreds of thousands of triangles in an open world game. Guess those will wait until I build a PC :’)</p>
+        <p>Overall, we dealt with 3 main sectors of ray tracing. The first involved actual ray generation and intersection testing. This was mostly contained in Part 1. We then dealt with acceleration, as naive ray tracing is extremely slow and costly. The biggest change we made to deal with this issue was implementing BVH trees in order to speed up traversal of primitives when testing for intersection. We later added adaptive sampling in order to minimize the number of samples taken to produce a high quality image. Finally, we dealt with the actual ray tracing: tracing the path of light and calculating the light that reaches our viewpoint.</p>
+        <p>We also had to maneuver ourselves around 3 spaces: 2D image space, 3D object space, and 3D world space. We only directly deal with 2D image space when we are tracing our back to our final 2D image. We worked with object space and world space together when tracing rays, as some information is stored in object space coordinates and others are in world space.</p>
+        <p>Throughout the project, I came to understand why ray tracing is so costly, but also impressed by the effects that even just a few tracing depth levels can have. It’s also cool to think about how real world light is technically infinite levels of ray tracing that we’re just taking in with our eyes all the time without much thought vs. computers chugging to produce the same result. Thank you GPUs everywhere :)</p>
+
+        <h2 align="middle">Part 1: Ray Generation and Intersection</h2>
+        <h3 align="middle">Ray Generation</h3>
+        <p>
+            To generate a ray given image coordinates, we have to transform image space to camera world to real world. To transform from image space to camera space, I used a simple idea of proportions. An important factor to account for in this transformation is that the center (0.5, 0.5) in image space corresponds to (0, 0, 1) in camera space. Thus, not only are we adding a third dimension and “pushing back” our image to plane <code>z=-1</code>, we are also moving the center.
+        </p>
+        <p>
+            To do this, I calculated the difference between <code>(x,y)</code>and (0.5, 0.5) in image space as a proportion of the dimensions of the quadrant it was in. Because our image space is a 1x1 square, each quadrant had 0.5x0.5 dimensions. I then multiplied this “offset from center” vector by the dimensions of the quadrant in camera space⁠—<code>tan(hFov/2)</code> and <code>tan(vFov/2)</code> respectively to get our direction vector in camera space. Finally, I multiplied this camera vector with our <code>c2w</code> (camera to world) matrix and normalized it to get the final world space ray direction vector.
+        </p>
+        <h3 align="middle">Intersection</h3>
+        <p>
+            To implement triangle intersection, I used the Moller-Trumbore algorithm to find the time <code>t</code> at which our ray would intersect the triangle as well as the barycentric coordinates of the point of intersection. If the Moller-Trumbore algorithm returned a valid <code>t</code> as well as barycentric coordinates, I updated the ray’s <code>max_t</code> and calculated the surface normal at the point of intersection with the barycentric coordinates.
+        </p>
+        <p>
+            For sphere intersection, I did the same steps except using the equation for ray-sphere intersection from lecture. To calculate the normal, I found the vector from the center of the sphere to the point of intersection.
+        </p>
+        <h3 align="middle">Normal Shading Results</h3>
+        <div align="center">
+            <table style="width=100%">
+                <tr>
+                    <td>
+                        <img src="./images/CBspheres.png" width="400px" />
+                        <figcaption align="middle">They seem to be having a serious talk</figcaption>
+                    </td>
+                    <td>
+                        <img src="./images/blob.png" width="400px" />
+                        <figcaption align="middle">A blob. Abstract art?</figcaption>
+                    </td>
+
+                </tr>
+            </table>
+        </div>
+
+
+        <h2 align="middle">Part 2: Bounding Volume Hierarchy</h2>
+        <h3 align="middle">Constructing a BVH Tree</h3>
+        <p>I used recursion to implement BVH construction. Regardless of node type, I first gathered every primitive from start to end into a bounding box and new node. After this, if the number of items in the newly constructed node was less than or equal to the max leaf size, I returned this node as a leaf after setting appropriate values. If not, I found the largest axis and split it at the average centroid on that axis. I then looped through the primitives and split into left and right nodes depending on whether the given primitive’s centroid was less than or greater than the average centroid on the chosen axis. I used average centroid instead of midpoint in order to split the primitives more evenly, as average centroid captures some of the skew of primitive distribution along the longest axis. I then recursively split each left/right node until the BVH was fully constructed.</p>
+
+        <h3 align="middle">Gotta Go Fast</h3>
+        <div align="center">
+            <table style="width=100%">
+                <tr>
+                    <td>
+                        <img src="./images/ocownobvh.png" width="400px" />
+                        <figcaption align="middle">Pre-BVH stats...</figcaption>
+                    </td>
+                    <td>
+                        <img src="./images/ocowbvh.png" width="400px" />
+                        <figcaption align="middle">Post-BVH stats!</figcaption>
+                    </td>
+
+                </tr>
+            </table>
+        </div>
+        <p>
+            Here, we can see that rendering <code>cow.dae</code> took ~72 seconds to render without BVH. Not terrible, but cow.dae is one of the simpler meshes. This will fall apart quickly. After implementing BVH, we can see that rendering the cow takes less than a second--only 0.08 seconds! Without BVH, we were naively checking if a ray intersected with any of the primitives in the mesh. On the other hand, with BVH, we are able to skip checking anything in a bounding box that does not intersect with our ray since it is impossible for a ray to intersect with a primitive inside a bounding box it does not intersect. Because of this, we save massive amounts of time in checking ray intersection. Because of our tree structure, we can easily traverse down to the leaf that our ray intersects with if an intersection exists. This is clear when we see that we were averaging 2700+ intersection tests per ray without BVH vs. about 2.5 per ray with BVH!
+        </p>
+        <h3 align="middle">So Many Triangles</h3>
+        <p>Below are some meshes that can only feasibly be rendered after implementing BVH! I don't even want to think about how long this would have taken on my laptop without BVH. Thanks hive machines :')</p>
+        <div align="center">
+            <table style="width=100%">
+                <tr>
+                    <td>
+                        <img src="./images/cblucy.png" width="400px" />
+                        <figcaption align="middle">CBlucy... Cool Bro Lucy</figcaption>
+                    </td>
+                    <td>
+                        <img src="./images/planck.png" width="400px" />
+                        <figcaption align="middle">Mood</figcaption>
+                    </td>
+
+                </tr>
+            </table>
+        </div>
+
+        <h2 align="middle">Part 3: Direct Illumination</h2>
+        <h3 align="middle">Uniform Hemisphere Sampling</h3>
+        <p>For uniform hemisphere sampling, I took num_samples number of samples in order to estimate the irradiance at our given hit point hit_p. For each sample, I first used <code>UniformHemisphereSampler3D::get_sample()</code> to get an object-space vector wi_object in the hemisphere. I then created a new ray with origin <code>hit_p</code> and direction <code>wi_world</code>. I set the <code>min_t</code> of this ray to <code>EPS_F</code> in order to avoid collision with the surface hit at <code>hit_p</code>. I then checked if this ray intersected with any primitives in my bvh, and added the emission weighted by the BSDF of our hit and the cosine of our <code>wi</code> vector. After accumulating all of these samples, I divided by the uniform pdf as well as <code>num_samples</code> to get an average irradiance.</p>
+
+        <h3 align="middle">Importance Sampling</h3>
+        <p>
+            For importance sampling, we directly sample the lights instead of uniformly in the hemisphere. To implement this, I looped over all of the lights in <code>scene->lights</code>. For each light, if the light was a delta light, I only sampled once. For non-delta lights, I sampled <code>num_samples</code> number of times.
+        </p>
+        <p>
+            For each sample, I used <code>SceneLight::sample_L</code> to get an emission for the given hit point and light as well as world space vector <code>wi</code> from hit point to light source, the distance, and pdf. If this light is behind the surface at the hit point, we skip this sample. After this, I created a ray from our hit point in the sampled direction <code>wi</code>. Again, we set <code>min_t</code> of this ray to <code>EPS_F</code> and offset the distance to the light by <code>EPS_F</code> as well to avoid collision with our hit surface and the light itself. If nothing intersects this ray, we know that there is nothing between the light source and our hit point, so we weight and add the emission from this point to a cumulative sum for each light. Once we finish sampling one light, we normalize the sum by the number of samples and add it to our total light for the hit point.
+        </p>
+
+        <h3 align="middle">Uniform vs Lighting</h3>
+
+        <div align="center">
+            <table style="width=100%">
+                <tr>
+                    <td>
+                        <img src="./images/64bunnyhemi.png" width="400px" />
+                        <figcaption align="middle">Uniform hemisphere sampling. That's rough, buddy.</figcaption>
+                    </td>
+                    <td>
+                        <img src="./images/64bunnyimport.png" width="400px" />
+                        <figcaption align="middle">Lighting sampling</figcaption>
+                    </td>
+                </tr>
+                <tr>
+                    <td>
+                        <img src="./images/64spherehemi.png" width="400px" />
+                        <figcaption align="middle">Uniform hemisphere sampling</figcaption>
+                    </td>
+                    <td>
+                        <img src="./images/64sphereimp.png" width="400px" />
+                        <figcaption align="middle">Lighting sampling</figcaption>
+                    </td>
+                </tr>
+            </table>
+        </div>
+        <p>We can see that using lighting sampling produces a much smoother, less noisy image! This is because every ray we sample is "relevant" in a sense. In uniform hemisphere sampling, we sample in every direction from our hit point, few of which actually connect to a light source. We are thus able to converge to the "true" image much faster than if we were to take uniform samples until enough relevant rays were produced.</p>
+
+        <h3 align="middle">Number of Light Rays vs. Noise</h3>
+        <div align="center">
+            <table style="width=100%">
+                <tr>
+                    <td>
+                        <img src="./images/bunny_1_1.png" width="200px" />
+                        <figcaption align="middle">1 light ray</figcaption>
+                    </td>
+                    <td>
+                        <img src="./images/bunny_1_4.png" width="200px" />
+                        <figcaption align="middle">4 light rays</figcaption>
+                    </td>
+                    <td>
+                        <img src="./images/bunny_1_16.png" width="200px" />
+                        <figcaption align="middle">16 light rays</figcaption>
+                    </td>
+                    <td>
+                        <img src="./images/bunny_1_64.png" width="200px" />
+                        <figcaption align="middle">64 light rays</figcaption>
+                    </td>
+                </tr>
+            </table>
+        </div>
+        <p>Each image above was rendered using 1 sample per pixel and light sampling. We can see that increasing the number of samples per area light reduces the noise in our output. When looking specifically at the soft shadow that the bunny casts on the floor, we can see that its area converges closer to the actual shadow, and the transition becomes much smoother.</p>
+
+        <h2 align="middle">Part 4: Global Illumination</h2>
+        <p>At this point, we've implemented direct illumination; light <em>at</em> light sources and light <em>directly from</em> light sources. Now we need to implement the costly part of ray tracing; calculating indirect light. Light bounces, so all of our images should be much brighter. For example, the light that hits the bunny directly from the ceiling light will bounce and illuminate its soft shadow, and light bouncing from the walls will hit the bunny and brighten it while also adding a hue.</p>
+
+        <h3 align="middle">Indirect Lighting</h3>
+        <p>To implement indirect lighting, we need to create functionality that allows us to measure light that hits our point of interest that isn’t necessarily directly from a light source. This is done by recursively looping through <code>at_least_one_bounce_radiance</code></p>
+        <p>First, we take the one_bounce radiance of our given ray. This is the baseline radiance we will return since we are trying to accumulate the light from at least one bounce. After this, we check if the depth of our ray is less than 1, meaning we have reached our max ray depth. If so, we simply return the single bounce radiance.</p>
+        <p>If the depth is not less than 1, we then use russian roulette to avoid infinite recursion. I chose termination probability 0.4, which means that there is a 0.4 chance of our recursion ending despite not reaching maximum depth. If we make it past the russian roulette, we then proceed to sample the source of our current hit point (which, unlike direct lighting, may not be a light source). If our new ray with origin at the current hit point and direction sampled from the original intersection intersects any primitive in our bvh, we recursively call <code>at_least_one_bounce_radiance</code>. We weigh the radiance derived from the recursive call the same way as in direct illumination, except we also divide by the continuation probability, which is 0.6 in my implementation.</p>
+
+        <div align="center">
+            <table style="width=100%">
+                <tr>
+                    <td>
+                        <img src="./images/buns1024l1.png" width="400px" />
+                        <figcaption align="middle">Bunny, but brighter now :)</figcaption>
+                    </td>
+                    <td>
+                        <img src="./images/speero1024.png" width="400px" />
+                        <figcaption align="middle">Their talk seems to be going well...</figcaption>
+                    </td>
+                </tr>
+            </table>
+        </div>
+
+        <p>Both images above were rendered with 1024 samples/pixel, 1 light ray, and max ray depth 5. We can see that both images are much brighter than with only direct illumination. We can especially see in the spheres that the red and blue of the walls is reflected back onto the spheres and their shadows. The shadows are much lighter as well now, since they receive some indirect light, whereas any surface not directly hit by light was completely dark previously.</p>
+
+        <h3 align="middle">A Tale of Two <strike>Cities</strike> Lighting Methods...?</h3>
+        <div align="center">
+            <table style="width=100%">
+                <tr>
+                    <td>
+                        <img src="./images/sphereonlydirect.png" width="400px" />
+                        <figcaption align="middle">Only direct lighting. Looks familiar!</figcaption>
+                    </td>
+                    <td>
+                        <img src="./images/sphereonlyindirect.png" width="400px" />
+                        <figcaption align="middle">Only indirect lighting...mood lighting?</figcaption>
+                    </td>
+                </tr>
+            </table>
+        </div>
+        <p>On the left, we have our spheres but only with direct lighting. This is essentially what we implemented in part 3, with only zero-bounce and one-bounce lighting. On the other hand, only indirect lighting is everything <em>other</em> than zero-bounce and one-bounce lighting. The only light in the image on the right is bounced from a non-light source. We can see that the most indirect illumination comes from the second bounce; for example, the indirect lighting image is brightest at the points on the sphere closer to the walls, which reflect direct light on the second bounce. We can think of this as a breakdown of what we've added with Part 4! If you add the illumination from these two images, we get our globally illuminated image like above.</p>
+
+        <h3 align="middle">Max Depth</h3>
+        <div align="center">
+            <table style="width=100%">
+                <tr>
+                    <td>
+                        <img src="./images/bunzerodepth.png" width="300px" />
+                        <figcaption align="middle">Max depth 0</figcaption>
+                    </td>
+                    <td>
+                        <img src="./images/buns1024l1m0.png" width="300px" />
+                        <figcaption align="middle">Max depth 1</figcaption>
+                    </td>
+                    <td>
+                        <img src="./images/buns1024l1m1.png" width="300px" />
+                        <figcaption align="middle">Max depth 2</figcaption>
+                    </td>
+                </tr>
+            </table>
+        </div>
+        <div align="center">
+            <table style="width=100%">
+                <tr>
+                    <td>
+                        <img src="./images/buns1024l1m2.png" width="300px" />
+                        <figcaption align="middle">Max depth 3</figcaption>
+                    </td>
+                    <td>
+                        <img src="./images/buns1024l1m100.png" width="300px" />
+                        <figcaption align="middle">Max depth 100</figcaption>
+                    </td>
+                </tr>
+            </table>
+        </div>
+        <p>Above, we can see that max depth 0 produces the same image as zero-bounce lighting, and max depth 1 produces the same image as one-bounce lighting. Our depth essentially dictates how many times we trace our light "bouncing". We see that there is a significant change from depths 1 to 2 (and 0 to 1 obviously). However, the differences are much subtler from depth 2 to 3, and almost unnoticeable from 3 to 100. This shows the importance of setting a conservative max depth and using russian roulette to stop recursion. The additional benefit/realism we get from 97 extra bounces is negligible and not worth the additional computational cost.</p>
+
+        <h3 align="middle">Various Sample-per-pixel Rates</h3>
+        <div align="center">
+            <table style="width=100%">
+                <tr>
+                    <td>
+                        <img src="./images/spheres1l4.png" width="200px" />
+                        <figcaption align="middle">1 sample/pixel</figcaption>
+                    </td>
+                    <td>
+                        <img src="./images/spheres2l4.png" width="200px" />
+                        <figcaption align="middle">2 samples/pixel</figcaption>
+                    </td>
+                    <td>
+                        <img src="./images/spheres4l4.png" width="200px" />
+                        <figcaption align="middle">4 samples/pixel</figcaption>
+                    </td>
+                    <td>
+                        <img src="./images/spheres8l4.png" width="200px" />
+                        <figcaption align="middle">8 samples/pixel</figcaption>
+                    </td>
+                </tr>
+            </table>
+        </div>
+        <div align="center">
+            <table style="width=100%">
+                <tr>
+                    <td align=align>
+                        <img src="./images/spheres16l4.png" width="200px" />
+                        <figcaption align="middle">16 samples/pixel</figcaption>
+                    </td>
+                    <td>
+                        <img src="./images/spheres64l4.png" width="200px" />
+                        <figcaption align="middle">64 samples/pixel</figcaption>
+                    </td>
+                    <td>
+                        <img src="./images/spheres1024l4.png" width="200px" />
+                        <figcaption align="middle">1024 samples/pixel</figcaption>
+                    </td>
+                </tr>
+            </table>
+        </div>
+        <p>Each image above was generated with 4 light rays and max ray depth 5. We can see that low sample/pixel rates produce very grainy/noisy images when using global illumination. Even at 64 samples, the noise is noticeable, and it takes 1024 samples to reach a generally smooth image. Since the light calculations are far more complex for global illumination, it takes a much higher sampling rate per pixel to converge to the true image.</p>
+
+
+        <h2 align="middle">Part 5: Adaptive Sampling</h2>
+        <p>To implement adaptive sampling, I made a few simple changes to <code>raytrace_pixel</code> from Part 1. Every <code>samplesPerBatch</code> sample I took for the pixel, I checked for convergence. To do this, I kept track of the cumulative sum of illumination as well as the cumulative sum of illumination squared. With these two statistics, I can calculate the mean and standard deviation of samples so far, and in turn check if these statistics have satisfied our stopping condition, dependent on <code>maxTolerance</code>. If the convergence condition was satisfied, I stopped sampling the given pixel. To produce a sampling rate visualization, I kept track of the sampling rate for each pixel in <code>sampleCountBuffer</code>.</p>
+        <div align="center">
+            <table style="width=100%">
+                <tr>
+                    <td align="middle">
+                        <img src="./images/bunnyadepti.png" width="480px" />
+                        <figcaption align="middle">2048 samples/pixel</figcaption>
+                    </td>
+                    <td align="middle">
+                        <img src="./images/bunnyadepti_rate.png" width="480px" />
+                        <figcaption align="middle">Sampling rate visualization</figcaption>
+                    </td>
+                </tr>
+            </table>
+        </div>
+
+        <p>Thanks to adaptive sampling, we can generate images with a whopping 2048 samples per pixel without frying our machines! This is because not every pixel (in fact, the majority) is actually sampled a full 2048 times. In the sampling rate visualization on the right, red areas have high sampling rates, and blue areas have low sampling rates.</p>
+
+    </div>
+</body>
+</html>
+
+
+
+
